@@ -1,0 +1,116 @@
+{
+  "system": {
+    "title": "Topologi 3-Tier Blok Diagram Sistem Smart Home IoT",
+    "developer": "Veryn",
+    "verified_by": "Veryn (Assessor Team)",
+    "last_updated": "2026-05-28"
+  },
+  "layers": [
+    {
+      "layer_id": "CLIENT_LAYER",
+      "layer_name": "1. User Interface (Client Layer)",
+      "description": "Lapisan antarmuka pengguna untuk kontrol manual, monitoring sensor, dan pengiriman perintah suara.",
+      "components": [
+        {
+          "component_id": "WEB_DASHBOARD",
+          "name": "React Vite Web Dashboard",
+          "technology": "React 18, Vite, Tailwind CSS, Lucide Icons",
+          "role": "Mengontrol sakelar relay, menampilkan telemetri sensor DHT secara real-time, menampilkan log aktivitas, dan generator kode IDE C++.",
+          "data_outputs": [
+            { "target": "FIREBASE_RTDB", "type": "Write/Read State", "protocol": "HTTPS JSON REST API (Real-time Web Sockets)" },
+            { "target": "EXPRESS_SERVER", "type": "Tarik Logs", "protocol": "HTTP Fetch GET" }
+          ]
+        },
+        {
+          "component_id": "TELEGRAM_BOT_APP",
+          "name": "Telegram Bot Messenger Client",
+          "technology": "Telegram Chat UI (Mobile, Web, Desktop) & Voice Typing Keyboard",
+          "role": "Menerima input perintah teks manual maupun voice typing (Speech-to-Text), serta menampilkan sapaan bantuan menu utama /start, status relay, dan peringatan asisten nirkabel.",
+          "data_outputs": [
+            { "target": "TELEGRAM_API_SERVER", "type": "Kirim Event Chat", "protocol": "HTTPS" }
+          ]
+        }
+      ]
+    },
+    {
+      "layer_id": "CLOUD_LAYER",
+      "layer_name": "2. Cloud Services (Middleware/Cloud Broker Layer)",
+      "description": "Infrastruktur komputasi awan yang bertindak sebagai mediator data atau perantara sinkronisasi status perangkat.",
+      "components": [
+        {
+          "component_id": "FIREBASE_RTDB",
+          "name": "Google Firebase Realtime Database",
+          "type": "NoSQL Database Cloud",
+          "role": "Pusat desentralisasi penyimpanan state IoT. Menjaga sinkronisasi dua arah yang konstan antara Web UI dan Perangkat ESP32 secara instan.",
+          "schema_nodes": [
+            "/relay/relay1 s.d. relay4",
+            "/sensor/temperature",
+            "/sensor/humidity",
+            "/esp32/status, wifi_signal, ip_address"
+          ]
+        },
+        {
+          "component_id": "TELEGRAM_API_SERVER",
+          "name": "Telegram Bot API Central",
+          "type": "Third-party Webhook / Long-polling Broker",
+          "role": "Menampung pesan teks perintah pengguna dan memancarkan respon balik asinkron ke chat ID pemilik."
+        },
+        {
+          "component_id": "EXPRESS_SERVER",
+          "name": "Node.js Express App Server Logs",
+          "technology": "Express.js, TypeScript",
+          "role": "Menjalankan broker log status cadangan, melayani file aset statis website, dan memicu logging waktu nyata pergerakan relay."
+        }
+      ]
+    },
+    {
+      "layer_id": "HARDWARE_LAYER",
+      "layer_name": "3. Physical Hardware (Embedded Device Layer)",
+      "description": "Perangkat elektronik fisik dan sensor mikro yang dipasang di ruangan.",
+      "components": [
+        {
+          "component_id": "ESP32_MICROCONTROLLER",
+          "name": "ESP32 DevKit V1 Main Controller",
+          "chipset": "Tensilica Dual-Core 32-bit LX6 Microprocessor",
+          "role": "Otak utama sistem. Memproses polling pesan Telegram setiap 1 detik, mengambil parameter sensor setiap 5 detik, serta memperbarui/membaca kondisi state di Firebase RTDB secara pararel.",
+          "network": "WiFi 802.11 b/g/n (Kost_Damai_WiFi)",
+          "interfaces": [
+            { "pin": "GPIO 4", "type": "Digital GPIO (Input)", "device": "DHT22 Sensor" },
+            { "pin": "GPIO 16", "type": "Digital Output (Active LOW)", "device": "Modul Relay IN1" },
+            { "pin": "GPIO 17", "type": "Digital Output (Active LOW)", "device": "Modul Relay IN2" },
+            { "pin": "GPIO 18", "type": "Digital Output (Active LOW)", "device": "Modul Relay IN3" },
+            { "pin": "GPIO 19", "type": "Digital Output (Active LOW)", "device": "Modul Relay IN4" }
+          ]
+        },
+        {
+          "component_id": "DHT22_SENSOR",
+          "name": "Sensor Suhu & Kelembapan DHT22 / AM2302",
+          "role": "Mengukur suhu udara ruangan (°C) dan kelembapan kebasahan relatif (%RH) secara berkala.",
+          "connection": { "target": "ESP32_MICROCONTROLLER", "pin": "GPIO 4", "transmission": "Sinyal Pulsa Seri 1-Wire Digital" }
+        },
+        {
+          "component_id": "RELAY_4_CHANNEL",
+          "name": "Modul Relay 4-Channel 5V dengan Optocoupler Isolation",
+          "role": "Memutus dan menyambungkan arus listrik besar (saklar mekanik) dari sumber tegangan jala-jala berdasarkan perintah tingkat logika rendah (LOW = Terhubung, HIGH = Terputus).",
+          "connection": { "target": "ESP32_MICROCONTROLLER", "pins": [16, 17, 18, 19], "logic": "Active LOW Ground Trigger" }
+        },
+        {
+          "component_id": "AC_LOADS",
+          "name": "Peralatan Listrik Rumah Tangga / Lampu Simulasi",
+          "spec": "Daya Beban AC 220V PLN (Contoh: Lampu Pijar, Kipas Angin, Solenoid Lock)",
+          "role": "Beban listrik akhir yang dikendalikan secara nirkabel.",
+          "connection": { "target": "RELAY_4_CHANNEL", "type": "Normally Open (NO) & Common (COM) Terminal Loops" }
+        }
+      ]
+    }
+  ],
+  "interconnections": [
+    { "from": "WEB_DASHBOARD", "to": "FIREBASE_RTDB", "direction": "Bi-directional", "description": "Sinkronisasi state sakelar virtual dan pembacaan parameter telemetri" },
+    { "from": "TELEGRAM_BOT_APP", "to": "TELEGRAM_API_SERVER", "direction": "Bi-directional", "description": "Klien Telegram mengirim perintah teks/suara dan menerima pemberitahuan state" },
+    { "from": "ESP32_MICROCONTROLLER", "to": "TELEGRAM_API_SERVER", "direction": "Bi-directional", "description": "ESP32 menanyakan pembaruan via HTTPS Long-Polling dan mengirim balik notifikasi balasan aksi" },
+    { "from": "ESP32_MICROCONTROLLER", "to": "FIREBASE_RTDB", "direction": "Bi-directional", "description": "Sinkronisasi state relay fisik (membaca boolean Firebase) dan mengunggah telemetri sensor DHT ke awan menggunakan library Firebase_ESP_Client" },
+    { "from": "DHT22_SENSOR", "to": "ESP32_MICROCONTROLLER", "direction": "Input-only", "description": "Mengirimkan pulsa data kelembapan dan temperatur ruangan" },
+    { "from": "ESP32_MICROCONTROLLER", "to": "RELAY_4_CHANNEL", "direction": "Output-only", "description": "Mengirimkan arus pemicu tingkat logika listrik Active Low" },
+    { "from": "RELAY_4_CHANNEL", "to": "AC_LOADS", "direction": "Output-only", "description": "Menutup kontak saklar logam mekanik untuk menyalakan aliran arus AC PLN" }
+  ]
+}

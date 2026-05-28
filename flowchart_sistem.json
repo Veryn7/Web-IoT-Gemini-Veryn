@@ -1,0 +1,173 @@
+{
+  "project": {
+    "name": "Smart Home 4-Channel Relay IoT Ecosystem",
+    "developer": "Veryn",
+    "controller": "ESP32 DevKit V1",
+    "cloud_connection": "Firebase Realtime Database"
+  },
+  "flowchart": {
+    "nodes": [
+      {
+        "id": "START_NODE",
+        "type": "Start",
+        "label": "Mulai",
+        "description": "Mikrokontroler ESP32 dihidupkan (Power On Boot)"
+      },
+      {
+        "id": "INIT_WIFI",
+        "type": "Process",
+        "label": "Inisialisasi Wi-Fi",
+        "detail": "Koneksi ke Kost_Damai_WiFi menggunakan SSID & Password"
+      },
+      {
+        "id": "INIT_PINS",
+        "type": "Process",
+        "label": "Set Pin GPIO",
+        "detail": "Atur GPIO 16, 17, 18, 19 sebagai OUTPUT (Relay Active LOW) dan GPIO 4 sebagai INPUT (Sensor DHT)"
+      },
+      {
+        "id": "INIT_FIREBASE",
+        "type": "Process",
+        "label": "Inisialisasi Client Firebase",
+        "detail": "Firebase.begin() dengan legacy Database Secret Token dan URI Host"
+      },
+      {
+        "id": "SERVER_CONNECT",
+        "type": "Process",
+        "label": "Setup HTTPS Client",
+        "detail": "client.setInsecure() diaktifkan untuk melewati enkripsi validasi SSL guna menghemat memori SRAM"
+      },
+      {
+        "id": "LOOP_START",
+        "type": "Loop_Marker",
+        "label": "Loop Utama (Continuous Non-Blocking Run)"
+      },
+      {
+        "id": "CHECK_TELEGRAM",
+        "type": "Decision",
+        "label": "Apakah Ada Pesan Telegram?",
+        "interval": "Setiap 1 detik (millis check)",
+        "paths": {
+          "yes": "VERIFY_CHAT_ID",
+          "no": "CHECK_SENSOR_TIMER"
+        }
+      },
+      {
+        "id": "VERIFY_CHAT_ID",
+        "type": "Decision",
+        "label": "Validasi Chat ID?",
+        "detail": "Apakah Chat ID pengirim sama dengan target terdaftar ('548301290')?",
+        "paths": {
+          "yes": "PARSE_TELEGRAM_COMMAND",
+          "no": "REJECT_ACCESS"
+        }
+      },
+      {
+        "id": "REJECT_ACCESS",
+        "type": "Process",
+        "label": "Akses Ditolak",
+        "detail": "Kirim peringatan bot 'Akses Ditolak / Unauthorized Access' ke chat asing, lalu kembali ke Loop Utama"
+      },
+      {
+        "id": "PARSE_TELEGRAM_COMMAND",
+        "type": "Process",
+        "label": "Parsing Perintah Telegram",
+        "detail": "Konversi string ke lowercase. Eksekusi perintah (misal: /lampu1_on, /all_off, /variasi1)"
+      },
+      {
+        "id": "TRIGGER_RELAY_GPIO_TG",
+        "type": "Process",
+        "label": "Triggering Pin Relay Fisik",
+        "detail": "Ubah pin status Relay (LOW = hidup, HIGH = mati)"
+      },
+      {
+        "id": "SEND_BOT_CONFIRMATION",
+        "type": "Process",
+        "label": "Kirim Balasan Notifikasi",
+        "detail": "Kirim status balasan pembaruan ('Lampu 1 Berhasil Dinyalakan!') ke Telegram Chat ID terdaftar"
+      },
+      {
+        "id": "UPDATE_FIREBASE_TG",
+        "type": "Process",
+        "label": "Perbarui State di Firebase",
+        "detail": "Kirim status boolean pin relay yang baru diubah ke Firebase RTDB node /relay/"
+      },
+      {
+        "id": "CHECK_SENSOR_TIMER",
+        "type": "Decision",
+        "label": "Apakah Timer Sensor Terpenuhi?",
+        "interval": "Setiap 5 detik (millis check)",
+        "paths": {
+          "yes": "READ_DHT_SENSOR",
+          "no": "LOOP_START"
+        }
+      },
+      {
+        "id": "READ_DHT_SENSOR",
+        "type": "Process",
+        "label": "Baca Sensor DHT11/22",
+        "detail": "Ambil parameter Suhu (float) dan Kelembapan (float) dari GPIO 4"
+      },
+      {
+        "id": "UPDATE_FIREBASE_SENSOR",
+        "type": "Process",
+        "label": "Upload Data Suhu & Kelembapan",
+        "detail": "Upload telemetri terkini ke node Firebase /sensor/temperature dan /sensor/humidity"
+      },
+      {
+        "id": "READ_FIREBASE_RELAY_STATE",
+        "type": "Process",
+        "label": "Tarik State Relay Firebase",
+        "detail": "Ambil payload status boolean dari node Firebase RTDB /relay/relay1 s.d. /relay/relay4"
+      },
+      {
+        "id": "COMPARE_RELAY_STATE",
+        "type": "Decision",
+        "label": "Apakah State Desentralisasi Berbeda?",
+        "detail": "Apakah State Relay di Firebase berbeda dengan Keadaan Fisik Pin GPIO?",
+        "paths": {
+          "yes": "SYNC_PHYSICAL_RELAY",
+          "no": "POST_ONLINE_DIAGNOSTICS"
+        }
+      },
+      {
+        "id": "SYNC_PHYSICAL_RELAY",
+        "type": "Process",
+        "label": "Sinkronisasi Relay Fisik",
+        "detail": "Ubah pin GPIO ESP32 mengikuti nilai state Firebase RTDB terbaru, lalu kabarkan perubahan tersebut ke Telegram"
+      },
+      {
+        "id": "POST_ONLINE_DIAGNOSTICS",
+        "type": "Process",
+        "label": "Kirim Log Diagnostik",
+        "detail": "Kirim status 'online', RSSI sinyal wifi (dBm), dan Alamat IP ESP32 ke Firebase Node /esp32/"
+      }
+    ],
+    "connections": [
+      { "from": "START_NODE", "to": "INIT_WIFI" },
+      { "from": "INIT_WIFI", "to": "INIT_PINS" },
+      { "from": "INIT_PINS", "to": "INIT_FIREBASE" },
+      { "from": "INIT_FIREBASE", "to": "SERVER_CONNECT" },
+      { "from": "SERVER_CONNECT", "to": "LOOP_START" },
+      { "from": "LOOP_START", "to": "CHECK_TELEGRAM" },
+      { "from": "CHECK_TELEGRAM", "condition": "Ya (Polling 1 Detik)", "to": "VERIFY_CHAT_ID" },
+      { "from": "CHECK_TELEGRAM", "condition": "Tidak", "to": "CHECK_SENSOR_TIMER" },
+      { "from": "VERIFY_CHAT_ID", "condition": "Ya", "to": "PARSE_TELEGRAM_COMMAND" },
+      { "from": "VERIFY_CHAT_ID", "condition": "Tidak", "to": "REJECT_ACCESS" },
+      { "from": "REJECT_ACCESS", "to": "LOOP_START" },
+      { "from": "PARSE_TELEGRAM_COMMAND", "to": "TRIGGER_RELAY_GPIO_TG" },
+      { "from": "TRIGGER_RELAY_GPIO_TG", "to": "SEND_BOT_CONFIRMATION" },
+      { "from": "SEND_BOT_CONFIRMATION", "to": "UPDATE_FIREBASE_TG" },
+      { "from": "UPDATE_FIREBASE_TG", "to": "CHECK_SENSOR_TIMER" },
+      { "from": "CHECK_SENSOR_TIMER", "condition": "Ya (Interval 5 Detik)", "to": "READ_DHT_SENSOR" },
+      { "from": "CHECK_SENSOR_TIMER", "condition": "Tidak", "to": "LOOP_START" },
+      { "from": "READ_DHT_SENSOR", "to": "UPDATE_FIREBASE_SENSOR" },
+      { "from": "UPDATE_FIREBASE_SENSOR", "to": "READ_FIREBASE_RELAY_STATE" },
+      { "from": "READ_FIREBASE_RELAY_STATE", "to": "COMPARE_RELAY_STATE" },
+      { "from": "COMPARE_RELAY_STATE", "condition": "Ya (Berbeda)", "to": "SYNC_PHYSICAL_RELAY" },
+      { "from": "COMPARE_RELAY_STATE", "condition": "Tidak (Sama)", "to": "POST_ONLINE_DIAGNOSTICS" },
+      { "from": "SYNC_PHYSICAL_RELAY", "to": "SEND_BOT_CONFIRMATION" },
+      { "from": "POST_ONLINE_DIAGNOSTICS", "to": "LOOP_START" }
+    ]
+  }
+}
