@@ -1,0 +1,6 @@
+{
+  "name": "Smart Home IoT 4-Relay Telegram Bot & Dashboard",
+  "description": "Interactive Web Dashboard and Telegram Bot ecosystem for monitoring and controlling a 4-channel ESP32 relay and DHT11/22 sensors with live hardware simulation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
