@@ -26,6 +26,11 @@ export function getArduinoCode(settings: AppSettings): string {
 #include <UniversalTelegramBot.h>
 #include <ArduinoJson.h>
 #include "DHT.h"
+#include <Firebase_ESP_Client.h>
+
+// Provide the helper signatures for token and RTDB
+#include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
 
 // --- KONFIGURASI WIFI & LAYANAN CLOUD ---
 #define WIFI_SSID "${ssid}"
@@ -36,9 +41,7 @@ export function getArduinoCode(settings: AppSettings): string {
 // Chat ID Anda (Gunakan bot @myidbot atau @RawDataBot)
 #define CHAT_ID "${chatid}"
 
-// Konfigurasi API Firebase / Web App Gateway
-// Jika menggunakan REST API, URL ini ditargetkan ke server Web Dashboard Anda
-#define API_GATEWAY_URL "https://your-app-url-on-cloud.run.app/api/iot/sync"
+// Konfigurasi API Firebase
 #define FIREBASE_DATABASE_URL "${fburl}"
 #define FIREBASE_AUTH "${fbauth}"
 
@@ -61,6 +64,11 @@ export function getArduinoCode(settings: AppSettings): string {
 DHT dht(DHT_PIN, DHT_TYPE);
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOT_TOKEN, client);
+
+// --- INSTANS DEKLARASI FIREBASE ---
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
 
 // Timer Millis Non-Blocking
 unsigned long lastTimeBotRan = 0;
@@ -126,6 +134,14 @@ void setup() {
 
   // Setelan keamanan HTTPS (Abaikan validasi sertifikat SSL agar hemat memori)
   client.setInsecure();
+
+  // --- INISIALISASI & KONFIGURASI NATIVE FIREBASE ---
+  config.database_url = FIREBASE_DATABASE_URL;
+  config.signer.tokens.legacy_token = FIREBASE_AUTH;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+  Serial.println("Koneksi Firebase diinisialisasi.");
   
   // Kirim pesan startup sukses ke Telegram
   bot.sendMessage(CHAT_ID, "🚀 *Sistem Smart Home ESP32 Aktif!*\\nHubungi /start untuk daftar perintah.", "Markdown");
@@ -253,70 +269,71 @@ void variation2() {
   variation2_active = false; // Kembalikan ke normal
 }
 
-// --- INTEGRASI WEB DASHBOARD (REST API GATEWAY / FIREBASE SYNC) ---
+// --- INTEGRASI FIREBASE REALTIME DATABASE (SINKRONISASI ASINKRON 2-ARAH) ---
 void syncWithCloud() {
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFiClientSecure syncClient;
-    syncClient.setInsecure();
+  if (WiFi.status() == WL_CONNECTED && Firebase.ready()) {
+    // 1. Unggah telemetri sensor DHT11/DHT22 ke Firebase
+    Firebase.RTDB.setFloat(&fbdo, "/sensor/temperature", current_temp);
+    Firebase.RTDB.setFloat(&fbdo, "/sensor/humidity", current_hum);
     
-    // Siapkan data JSON untuk diunggah
-    StaticJsonDocument<500> jsonDoc;
-    
-    // Mengakumulasi State Relay saat ini
-    JsonObject relayObj = jsonDoc.createNestedObject("relay");
-    relayObj["relay1"] = relay1_status;
-    relayObj["relay2"] = relay2_status;
-    relayObj["relay3"] = relay3_status;
-    relayObj["relay4"] = relay4_status;
-    
-    // Mengumpulkan Data Telemetry Sensor
-    JsonObject sensorObj = jsonDoc.createNestedObject("sensor");
-    sensorObj["temperature"] = current_temp;
-    sensorObj["humidity"] = current_hum;
-    
-    // Detailing Informasi ESP32
-    JsonObject espObj = jsonDoc.createNestedObject("esp32");
-    espObj["status"] = "online";
-    espObj["wifi_signal"] = String(WiFi.RSSI()) + " dBm";
-    espObj["ip_address"] = WiFi.localIP().toString();
+    // 2. Unggah status diagnostik ESP32 ke Firebase
+    StringToFirebase(&fbdo, "/esp32/status", "online");
+    StringToFirebase(&fbdo, "/esp32/wifi_signal", String(WiFi.RSSI()) + " dBm");
+    StringToFirebase(&fbdo, "/esp32/ip_address", WiFi.localIP().toString());
 
-    String requestBody;
-    serializeJson(jsonDoc, requestBody);
-    
-    // POST request ke Gateway Dashboard
-    HTTPClient http;
-    http.begin(syncClient, API_GATEWAY_URL);
-    http.addHeader("Content-Type", "application/json");
-    
-    int httpResponseCode = http.POST(requestBody);
-    
-    if (httpResponseCode > 0) {
-      String response = http.getString();
-      Serial.println("Sync Sukses. Respons Cloud:");
-      Serial.println(response);
-      
-      // Parse perintah eksternal yang diinput dari Web Dashboard
-      StaticJsonDocument<300> resDoc;
-      deserializeJson(resDoc, response);
-      
-      if (resDoc.containsKey("relay")) {
-        // Update relay berdasarkan instruksi dashboard bila terdapat perbedaan
-        boolean w_r1 = resDoc["relay"]["relay1"];
-        boolean w_r2 = resDoc["relay"]["relay2"];
-        boolean w_r3 = resDoc["relay"]["relay3"];
-        boolean w_r4 = resDoc["relay"]["relay4"];
-        
-        if (w_r1 != relay1_status) { digitalWrite(RELAY_1, w_r1 ? RELAY_ON : RELAY_OFF); relay1_status = w_r1; }
-        if (w_r2 != relay2_status) { digitalWrite(RELAY_2, w_r2 ? RELAY_ON : RELAY_OFF); relay2_status = w_r2; }
-        if (w_r3 != relay3_status) { digitalWrite(RELAY_3, w_r3 ? RELAY_ON : RELAY_OFF); relay3_status = w_r3; }
-        if (w_r4 != relay4_status) { digitalWrite(RELAY_4, w_r4 ? RELAY_ON : RELAY_OFF); relay4_status = w_r4; }
+    // 3. Baca instruksi status relay terbaru yang diatur dari Web Dashboard
+    if (Firebase.RTDB.getBool(&fbdo, "/relay/relay1")) {
+      if (fbdo.dataType() == "boolean") {
+        bool w_r1 = fbdo.to<bool>();
+        if (w_r1 != relay1_status) { 
+          digitalWrite(RELAY_1, w_r1 ? RELAY_ON : RELAY_OFF); 
+          relay1_status = w_r1; 
+          Serial.println("Relay 1 disinkronkan ke: " + String(w_r1));
+        }
       }
-    } else {
-      Serial.print("Error saat sinkronisasi Cloud: ");
-      Serial.println(httpResponseCode);
     }
-    http.end();
+    if (Firebase.RTDB.getBool(&fbdo, "/relay/relay2")) {
+      if (fbdo.dataType() == "boolean") {
+        bool w_r2 = fbdo.to<bool>();
+        if (w_r2 != relay2_status) { 
+          digitalWrite(RELAY_2, w_r2 ? RELAY_ON : RELAY_OFF); 
+          relay2_status = w_r2; 
+          Serial.println("Relay 2 disinkronkan ke: " + String(w_r2));
+        }
+      }
+    }
+    if (Firebase.RTDB.getBool(&fbdo, "/relay/relay3")) {
+      if (fbdo.dataType() == "boolean") {
+        bool w_r3 = fbdo.to<bool>();
+        if (w_r3 != relay3_status) { 
+          digitalWrite(RELAY_3, w_r3 ? RELAY_ON : RELAY_OFF); 
+          relay3_status = w_r3; 
+          Serial.println("Relay 3 disinkronkan ke: " + String(w_r3));
+        }
+      }
+    }
+    if (Firebase.RTDB.getBool(&fbdo, "/relay/relay4")) {
+      if (fbdo.dataType() == "boolean") {
+        bool w_r4 = fbdo.to<bool>();
+        if (w_r4 != relay4_status) { 
+          digitalWrite(RELAY_4, w_r4 ? RELAY_ON : RELAY_OFF); 
+          relay4_status = w_r4; 
+          Serial.println("Relay 4 disinkronkan ke: " + String(w_r4));
+        }
+      }
+    }
+
+    // 4. Update status relay lokal kembali ke Firebase agar tersinkronisasi sempurna
+    Firebase.RTDB.setBool(&fbdo, "/relay/relay1", relay1_status);
+    Firebase.RTDB.setBool(&fbdo, "/relay/relay2", relay2_status);
+    Firebase.RTDB.setBool(&fbdo, "/relay/relay3", relay3_status);
+    Firebase.RTDB.setBool(&fbdo, "/relay/relay4", relay4_status);
   }
+}
+
+// Helper untuk penulisan string Firebase yang kompatibel
+void StringToFirebase(FirebaseData *dataObj, const char* path, String val) {
+  Firebase.RTDB.setString(dataObj, path, val);
 }
 
 // --- HANDLER TELEGRAM BOT UTAMA & VOICE-TO-TEXT ---
